@@ -5,12 +5,12 @@ import {HttpException} from "../../exceptions";
 
 export class OpenstackAuthenticator {
 
+
     private readonly _endpoint: string;
     private readonly _id: string;
     private readonly _secret: string;
     private _principal: { token: string, expiresAt: Date } = null;
     private readonly _client: AxiosInstance;
-
 
     /**
      * Create a new openstack authenticator

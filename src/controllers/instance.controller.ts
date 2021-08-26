@@ -77,7 +77,8 @@ export class InstanceController {
      */
     public async get(request: Request, response: Response, next: NextFunction) {
         try {
-            const instance = await this._openstack.instance(request.params.id);
+            const {id} = request.params;
+            const instance = await this._openstack.instance(id);
             response.json(instance);
         } catch (error) {
             next(error);

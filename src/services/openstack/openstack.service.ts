@@ -1,10 +1,11 @@
 import {singleton} from "tsyringe";
 import {Flavour, Image, Instance, InstanceFault, Metrics} from "../../models";
 import axios, {AxiosInstance} from "axios";
-import {logger} from "../../utils";
 import {OpenstackAuthenticator} from "./openstack-authenticator";
 import {HttpException} from "../../exceptions";
 import {CloudProvider} from "../cloud-provider.interface";
+import {logger} from "../../utils";
+import {Mutex} from "async-mutex";
 
 @singleton()
 export class OpenstackService implements CloudProvider {
@@ -13,6 +14,7 @@ export class OpenstackService implements CloudProvider {
     private readonly _endpoints: { computeEndpoint: string; imageEndpoint: string };
     private readonly _network: { addressProvider: string; addressProviderUUID: string };
     private readonly _authenticator: OpenstackAuthenticator;
+    private readonly _mutex: Mutex;
 
     /**
      * Create a new openstack service
@@ -34,6 +36,7 @@ export class OpenstackService implements CloudProvider {
         this._network = network;
         this._client = this.createClient(timeout);
         this._authenticator = authenticator;
+        this._mutex = new Mutex();
     }
 
     /**
@@ -46,8 +49,14 @@ export class OpenstackService implements CloudProvider {
             timeout
         });
         client.interceptors.request.use(async config => {
+
             if (this._authenticator.isAuthenticated() === false) {
-                await this._authenticator.authenticate();
+                const release = await this._mutex.acquire();
+                try {
+                    await this._authenticator.authenticate();
+                } finally {
+                    release();
+                }
             }
             const {token} = this._authenticator.getPrincipal();
             config.headers['X-Auth-Token'] = token;
@@ -83,6 +92,24 @@ export class OpenstackService implements CloudProvider {
             }
             return null;
         };
+
+        const securityGroups = (groups): string[] => {
+            if (groups) {
+                return groups.map(group => group.name);
+            }
+            return [];
+        }
+        const address = (addresses): string => {
+            if (addresses) {
+                const provider = addresses[this._network.addressProvider];
+                if (provider) {
+                    if (provider.length > 0) {
+                        return provider[0]['addr'];
+                    }
+                }
+            }
+            return null;
+        };
         const {id, name, flavor, image, created, addresses, security_groups, status} = server;
         return {
             id,
@@ -91,8 +118,8 @@ export class OpenstackService implements CloudProvider {
             flavorId: flavor.id,
             imageId: image.id,
             createdAt: created,
-            address: addresses === null ? null : addresses[this._network.addressProvider][0]['addr'],
-            securityGroups: security_groups.map(group => group.name),
+            address: address(addresses),
+            securityGroups:  securityGroups(security_groups),
             fault: fault(server)
         };
     }
