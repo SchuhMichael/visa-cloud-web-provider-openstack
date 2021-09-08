@@ -45,6 +45,7 @@ The following environment variables are used to configure VISA Cloud Web Provide
 | VISA_WEB_PROVIDER_OPENSTACK_IDENTITY_ENDPOINT | | The API endpoint to the OpenStack Identity API |
 | VISA_WEB_PROVIDER_OPENSTACK_COMPUTE_ENDPOINT | | The API endpoint to the OpenStack Compute API |
 | VISA_WEB_PROVIDER_OPENSTACK_IMAGE_ENDPOINT | | The API endpoint to the OpenStack Image API |
+| VISA_WEB_PROVIDER_OPENSTACK_NETWORK_ENDPOINT | | The API endpoint to the OpenStack Network API |
 | VISA_WEB_PROVIDER_OPENSTACK_APPLICATION_ID | | The application id for an OpenStack Application Credential |
 | VISA_WEB_PROVIDER_OPENSTACK_APPLICATION_SECRET | | The application secret for an OpenStack Application Credential |
 | VISA_WEB_PROVIDER_OPENSTACK_ADDRESS_PROVIDER | | The OpenStack network address provider |

@@ -1,5 +1,5 @@
 import {singleton} from "tsyringe";
-import {Flavour, Image, Instance, InstanceFault, Metrics} from "../../models";
+import {CloudInstanceState, Flavour, Image, Instance, InstanceFault, Metrics} from "../../models";
 import axios, {AxiosInstance} from "axios";
 import {OpenstackAuthenticator} from "./openstack-authenticator";
 import {HttpException} from "../../exceptions";
@@ -11,7 +11,7 @@ import {Mutex} from "async-mutex";
 export class OpenstackService implements CloudProvider {
 
     private readonly _client: AxiosInstance;
-    private readonly _endpoints: { computeEndpoint: string; imageEndpoint: string };
+    private readonly _endpoints: { computeEndpoint: string; imageEndpoint: string, networkEndpoint: string };
     private readonly _network: { addressProvider: string; addressProviderUUID: string };
     private readonly _authenticator: OpenstackAuthenticator;
     private readonly _mutex: Mutex;
@@ -26,7 +26,8 @@ export class OpenstackService implements CloudProvider {
     constructor(
         endpoints: {
             computeEndpoint: string,
-            imageEndpoint: string
+            imageEndpoint: string,
+            networkEndpoint: string
         },
         network: { addressProvider: string; addressProviderUUID: string },
         authenticator: OpenstackAuthenticator,
@@ -49,7 +50,6 @@ export class OpenstackService implements CloudProvider {
             timeout
         });
         client.interceptors.request.use(async config => {
-
             if (this._authenticator.isAuthenticated() === false) {
                 const release = await this._mutex.acquire();
                 try {
@@ -99,6 +99,7 @@ export class OpenstackService implements CloudProvider {
             }
             return [];
         }
+
         const address = (addresses): string => {
             if (addresses) {
                 const provider = addresses[this._network.addressProvider];
@@ -110,16 +111,55 @@ export class OpenstackService implements CloudProvider {
             }
             return null;
         };
+
+        const state = (status, taskStatus): CloudInstanceState => {
+            switch (status) {
+                case "BUILDING":
+                case "REBUILD":
+                    return CloudInstanceState.BUILDING;
+                case "ACTIVE":
+                    if ("powering-off" === taskStatus) {
+                        return CloudInstanceState.STOPPING;
+                    } else {
+                        return CloudInstanceState.ACTIVE;
+                    }
+                case "HARD_REBOOT":
+                case "REBOOT":
+                    return CloudInstanceState.REBOOTING;
+                case "MIGRATING":
+                case "RESCUE":
+                case "RESIZE":
+                case "REVERT_RESIZE":
+                case "VERIFY_SIZE":
+                    return CloudInstanceState.UNAVAILABLE;
+                case "DELETED":
+                case "SHELVED":
+                case "SHELVED_OFFLOADED":
+                case "SOFT_DELETED":
+                    return CloudInstanceState.DELETED;
+                case "PAUSED":
+                case "SHUTOFF":
+                case "SUSPENDED":
+                    return CloudInstanceState.STOPPED;
+                case "ERROR":
+                    return CloudInstanceState.ERROR;
+                case "UNKNOWN":
+                default:
+                    return CloudInstanceState.UNKNOWN;
+            }
+        }
+
         const {id, name, flavor, image, created, addresses, security_groups, status} = server;
         return {
             id,
             name: name,
-            state: status,
-            flavorId: flavor.id,
+            // getting the task state is not very nice....
+            state: state(status, server['OS-EXT-STS:task_state']),
+            flavourId: flavor.id,
             imageId: image.id,
             createdAt: created,
             address: address(addresses),
-            securityGroups:  securityGroups(security_groups),
+            securityGroups: securityGroups(security_groups),
             fault: fault(server)
         };
     }
@@ -146,7 +186,7 @@ export class OpenstackService implements CloudProvider {
         const result = await this._client.get(url);
         const {data} = result;
         const {servers} = data;
-        return servers.map(this.toInstance);
+        return servers.map(this.toInstance.bind(this));
     }
 
     /**
@@ -165,7 +205,7 @@ export class OpenstackService implements CloudProvider {
      * Get the security groups for a given instance identifier
      * @param id the instance identifier
      */
-    async securityGroups(id: string): Promise<string[]> {
+    async securityGroupsForInstance(id: string): Promise<string[]> {
         logger.info(`Fetching security groups for instance: ${id}`);
         const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}/os-security-groups`;
         const result = await this._client.get(url);
@@ -179,7 +219,7 @@ export class OpenstackService implements CloudProvider {
      * @param id the instance identifier
      * @param name the security group name
      */
-    async removeSecurityGroup(id: string, name: string): Promise<void> {
+    async removeSecurityGroupFromInstance(id: string, name: string): Promise<void> {
         logger.info(`Removing security group ${name} for instance: ${id}`);
         const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}/action`;
         await this._client.post(url, {
@@ -194,7 +234,7 @@ export class OpenstackService implements CloudProvider {
      * @param id the instance identifier
      * @param name the security group name
      */
-    async addSecurityGroup(id: string, name: string): Promise<void> {
+    async addSecurityGroupForInstance(id: string, name: string): Promise<void> {
         logger.info(`Adding security group ${name} for instance: ${id}`);
         const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}/action`;
         await this._client.post(url, {
@@ -296,7 +336,7 @@ export class OpenstackService implements CloudProvider {
      * Delete an instance
      * @param id the instance identifier
      */
-    async delete(id: string): Promise<void> {
+    async deleteInstance(id: string): Promise<void> {
         logger.info(`Deleting instance: ${id}`);
         const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}`;
         await this._client.delete(url);
@@ -376,5 +416,16 @@ export class OpenstackService implements CloudProvider {
         };
     }
 
+    /**
+     * Get all available security groups
+     */
+    async securityGroups(): Promise<string[]> {
+        logger.info(`Fetching all available security groups`);
+        const url = `${this._endpoints.networkEndpoint}/v2.0/security-groups`;
+        const result = await this._client.get(url);
+        const {data} = result;
+        const groups = data.security_groups;
+        return groups.map(group => group.name).sort((a, b) => a.localeCompare(b));
+    }
 
 }

@@ -2,17 +2,21 @@ import "reflect-metadata";
 import {authenticationMiddleware, errorHandlerMiddleware, logger} from './utils';
 import express from 'express'
 import * as http from 'http';
-import {FlavourController, ImageController, InstanceController, MetricsController} from "./controllers";
+import {
+    FlavourController,
+    ImageController,
+    InstanceController,
+    MetricsController,
+    SecurityGroupController
+} from "./controllers";
 import {APPLICATION_CONFIG} from './application-config';
-import {container} from "tsyringe";
-import {OpenstackAuthenticator, OpenstackService} from "./services";
+import {container} from "./ioc";
 
 export class Application {
 
     private _server: http.Server;
 
     constructor() {
-        this.init();
     }
 
     async start(): Promise<null> {
@@ -23,7 +27,8 @@ export class Application {
             const app = express();
             const router = express.Router();
             app.use(express.json());
-            app.use(authenticationMiddleware);
+
+            router.use(authenticationMiddleware);
 
             /**
              * Routing for instances
@@ -34,7 +39,7 @@ export class Application {
             router.get('/instances/:id', (req, res, next) => container.resolve(InstanceController).get(req, res, next));
             router.get('/instances/:id/security_groups', (req, res, next) => container.resolve(InstanceController).securityGroups(req, res, next));
             router.post('/instances/:id/security_groups', (req, res, next) => container.resolve(InstanceController).addSecurityGroup(req, res, next));
-            router.delete('/instances/:id/security_groups', (req, res, next) => container.resolve(InstanceController).removeSecurityGroup(req, res, next));
+            router.post('/instances/:id/security_groups/remove', (req, res, next) => container.resolve(InstanceController).removeSecurityGroup(req, res, next));
             router.get('/instances/:id/ip', (req, res, next) => container.resolve(InstanceController).ip(req, res, next));
             router.delete('/instances/:id', (req, res, next) => container.resolve(InstanceController).remove(req, res, next));
             router.post('/instances/:id/start', (req, res, next) => container.resolve(InstanceController).start(req, res, next));
@@ -52,6 +57,11 @@ export class Application {
              */
             router.get('/flavours', (req, res, next) => container.resolve(FlavourController).all(req, res, next));
             router.get('/flavours/:id', (req, res, next) => container.resolve(FlavourController).get(req, res, next));
+
+            /**
+             * Routing for security groups
+             */
+            router.get('/security_groups', (req, res, next) => container.resolve(SecurityGroupController).all(req, res, next));
 
             /**
              * Routing for metrics
@@ -83,26 +93,6 @@ export class Application {
         return null;
     }
 
-    private init(): void {
-        container.register<OpenstackService>(OpenstackService, {
-            useValue: new OpenstackService(
-                {
-                    computeEndpoint: APPLICATION_CONFIG().openstack.computeEndpoint,
-                    imageEndpoint: APPLICATION_CONFIG().openstack.imageEndpoint
-                },
-                {
-                    addressProvider: APPLICATION_CONFIG().openstack.addressProvider,
-                    addressProviderUUID: APPLICATION_CONFIG().openstack.addressProviderUUID
-                },
-                new OpenstackAuthenticator(
-                    APPLICATION_CONFIG().openstack.identityEndpoint,
-                    APPLICATION_CONFIG().openstack.applicationId,
-                    APPLICATION_CONFIG().openstack.applicationSecret,
-                    APPLICATION_CONFIG().openstack.timeout
-                ),
-                APPLICATION_CONFIG().openstack.timeout
-            )
-        });
-    }
+
 }
 

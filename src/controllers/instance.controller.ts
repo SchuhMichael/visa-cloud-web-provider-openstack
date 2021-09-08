@@ -22,7 +22,7 @@ export class InstanceController {
      * Get a list of all instances
      * @param request the http request
      * @param response the http response
-     * @param next the next middleware handler
+     * @param next the next middleware handler#
      */
     public async all(request: Request, response: Response, next: NextFunction) {
         try {
@@ -119,7 +119,7 @@ export class InstanceController {
             } else {
                 const {id} = request.params;
                 const {name} = json;
-                await this._openstack.addSecurityGroup(id, name);
+                await this._openstack.addSecurityGroupForInstance(id, name);
                 response.json({message: 'Added security group'});
             }
         } catch (error) {
@@ -136,7 +136,7 @@ export class InstanceController {
     public async securityGroups(request: Request, response: Response, next: NextFunction) {
         try {
             const {id} = request.params;
-            const groups = await this._openstack.securityGroups(id);
+            const groups = await this._openstack.securityGroupsForInstance(id);
             response.json(groups);
         } catch (error) {
             next(error);
@@ -161,7 +161,7 @@ export class InstanceController {
             } else {
                 const {id} = request.params;
                 const {name} = json;
-                await this._openstack.removeSecurityGroup(id, name);
+                await this._openstack.removeSecurityGroupFromInstance(id, name);
                 response.json({message: 'Removed security group'});
             }
         } catch (error) {
@@ -193,7 +193,7 @@ export class InstanceController {
     public async remove(request: Request, response: Response, next: NextFunction) {
         try {
             const {id} = request.params;
-            await this._openstack.delete(id);
+            await this._openstack.deleteInstance(id);
             response.json({message: 'Deleted instance'});
         } catch (error) {
             next(error);

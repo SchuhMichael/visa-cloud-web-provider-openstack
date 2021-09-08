@@ -20,6 +20,7 @@ export class ApplicationConfig {
         identityEndpoint: string;
         computeEndpoint: string;
         imageEndpoint: string;
+        networkEndpoint: string;
         applicationId: string;
         applicationSecret: string;
         addressProvider: string;
@@ -55,6 +56,7 @@ export function APPLICATION_CONFIG(): ApplicationConfig {
                 identityEndpoint: process.env.VISA_WEB_PROVIDER_OPENSTACK_IDENTITY_ENDPOINT,
                 computeEndpoint: process.env.VISA_WEB_PROVIDER_OPENSTACK_COMPUTE_ENDPOINT,
                 imageEndpoint: process.env.VISA_WEB_PROVIDER_OPENSTACK_IMAGE_ENDPOINT,
+                networkEndpoint: process.env.VISA_WEB_PROVIDER_OPENSTACK_NETWORK_ENDPOINT,
                 applicationId: process.env.VISA_WEB_PROVIDER_OPENSTACK_APPLICATION_ID,
                 applicationSecret: process.env.VISA_WEB_PROVIDER_OPENSTACK_APPLICATION_SECRET,
                 addressProvider: process.env.VISA_WEB_PROVIDER_OPENSTACK_ADDRESS_PROVIDER,
@@ -63,6 +65,5 @@ export function APPLICATION_CONFIG(): ApplicationConfig {
             }
         };
     }
-
     return applicationConfig;
 }

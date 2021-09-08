@@ -22,21 +22,21 @@ export interface CloudProvider {
      * Get the security groups for a given instance identifier
      * @param id the instance identifier
      */
-    securityGroups(id: string): Promise<string[]>;
+    securityGroupsForInstance(id: string): Promise<string[]>;
 
     /**
      * Remove a security for a given instance identifier
      * @param id the instance identifier
      * @param name the security group name
      */
-    removeSecurityGroup(id: string, name: string): Promise<void>;
+    removeSecurityGroupFromInstance(id: string, name: string): Promise<void>;
 
     /**
      * Add a security for a given instance identifier
      * @param id the instance identifier
      * @param name the security group name
      */
-    addSecurityGroup(id: string, name: string): Promise<void>;
+    addSecurityGroupForInstance(id: string, name: string): Promise<void>;
 
     /**
      * Create a new instance
@@ -58,7 +58,7 @@ export interface CloudProvider {
      * Delete an instance
      * @param id the instance identifier
      */
-    delete(id: string): Promise<void>;
+    deleteInstance(id: string): Promise<void>;
 
     /**
      * Shutdown an instance
@@ -104,5 +104,10 @@ export interface CloudProvider {
      * Get the cloud metrics (i.e. memory used, number of instances etc.)
      */
     metrics(): Promise<Metrics>;
+
+    /**
+     * Get all of the available security groups
+     */
+    securityGroups(): Promise<string[]>;
 
 }
