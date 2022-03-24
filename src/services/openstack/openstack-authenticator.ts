@@ -38,8 +38,8 @@ export class OpenstackAuthenticator {
      */
     private isTokenExpired(): boolean {
         const now = new Date();
-        const validity = sub(now, {minutes: 30});
-        if (isAfter(validity, this._principal.expiresAt,)) {
+        const validity = sub(this._principal.expiresAt, {minutes: 30});
+        if (isAfter(now, validity)) {
             logger.info('Token has expired');
             this._principal = null;
             return true;
