@@ -114,7 +114,7 @@ export class OpenstackService implements CloudProvider {
 
         const state = (status, taskStatus): CloudInstanceState => {
             switch (status) {
-                case "BUILDING":
+                case "BUILD":
                 case "REBUILD":
                     return CloudInstanceState.BUILDING;
                 case "ACTIVE":
