@@ -270,11 +270,11 @@ export class OpenstackService implements CloudProvider {
                     name: group
                 }
             }),
-            networks: [
+            networks: this._network.addressProviderUUID.split(',').map((uuid) => (
                 {
-                    uuid: this._network.addressProviderUUID
+                    uuid: uuid
                 }
-            ],
+            )),
             metadata,
             user_data: Buffer.from(bootCommand).toString('base64')
         }
