@@ -1,8 +1,6 @@
-FROM node:10-slim as build
+FROM node:18-slim as build
 
 RUN apt-get update && apt-get install curl -y
-
-RUN curl -sfL https://install.goreleaser.com/github.com/tj/node-prune.sh | bash -s -- -b /usr/local/bin
 
 WORKDIR /app
 
@@ -16,11 +14,9 @@ RUN npm run build
 # remove development dependencies
 RUN npm prune --production
 
-# run node prune
-RUN /usr/local/bin/node-prune
 
 # Check out https://hub.docker.com/_/node to select a new base image
-FROM node:10-alpine
+FROM node:18-alpine
 
 # Add timezone info (to allow for modification at runtime)
 RUN apk --update add tzdata alpine-conf

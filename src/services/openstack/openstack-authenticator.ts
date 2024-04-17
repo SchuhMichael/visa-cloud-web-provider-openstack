@@ -93,7 +93,9 @@ export class OpenstackAuthenticator {
             const response = await this.sendRequest();
             this.handleResponse(response);
         } catch (error) {
-            throw new HttpException(`Error authenticating to openstack: ${error.message}`, error?.response?.status);
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            const statusCode = (error as any)?.response?.status || 500;
+            throw new HttpException(`Error authenticating to openstack: ${errorMessage}`, statusCode);
         }
     }
 
