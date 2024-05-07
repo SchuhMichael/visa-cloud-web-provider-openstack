@@ -10,7 +10,7 @@ export function authenticationMiddleware(req: Request, res: Response, next: Next
     const authToken = req.headers['x-auth-token'];
 
     if (APPLICATION_CONFIG().server.authToken != null && authToken !== APPLICATION_CONFIG().server.authToken) {
-        logger.info(`Unauthorized request`);
+        // logger.info(`Unauthorized request with token: ${authToken}, expected token: ${APPLICATION_CONFIG().server.authToken}`);
         res.status(401).send(`Unauthorized`);
 
     } else {

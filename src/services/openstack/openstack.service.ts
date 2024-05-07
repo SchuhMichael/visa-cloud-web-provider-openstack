@@ -365,6 +365,7 @@ export class OpenstackService implements CloudProvider {
     async flavours(): Promise<Flavour[]> {
         logger.info(`Fetching flavours`);
         const url = `${this._endpoints.computeEndpoint}/v2/flavors/detail`;
+        // logger.info(`Fetching flavours: ${url}`);
         const result = await this._client.get(url);
         const {data} = result;
         return data.flavors.map(image => {

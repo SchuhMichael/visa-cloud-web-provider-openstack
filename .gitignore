@@ -68,3 +68,7 @@ typings/
 DEVELOPING.md
 
 data
+
+.devcontainer
+.devcontainer/*
+

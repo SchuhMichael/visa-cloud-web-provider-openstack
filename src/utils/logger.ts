@@ -29,6 +29,11 @@ export const buildLogger = function () {
             })
         ]
     });
+    // logger.info(`Using console logging transport for info`);
+    // logger.debug(`Using console logging transport for debug`);
+    //logger.warning(`Using console logging transport for warn`);
+    //logger.error(`Using console logging transport for error`);
+    // logger.info(`Logging level set to ${APPLICATION_CONFIG().logging.level}`);
 
     const syslogConf = APPLICATION_CONFIG().logging.syslog
 
