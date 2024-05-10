@@ -74,7 +74,7 @@ export class Application {
             const port = APPLICATION_CONFIG().server.port;
             const host = APPLICATION_CONFIG().server.host;
             this._server = app.listen(port, host);
-
+            logger.debug(`gce key at ${APPLICATION_CONFIG().gce.keyFile}`);
             logger.info(`Application started (listening on ${host}:${port})`);
         }
 

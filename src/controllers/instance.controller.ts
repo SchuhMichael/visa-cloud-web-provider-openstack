@@ -1,6 +1,6 @@
 import {Request, Response} from "express";
 import {singleton} from "tsyringe";
-import {OpenstackService} from "../services";
+import {GceServiceAlpha} from "../services";
 import {NextFunction} from "express-serve-static-core";
 import Joi from "joi";
 import {HttpException} from "../exceptions";
@@ -8,13 +8,13 @@ import {HttpException} from "../exceptions";
 @singleton()
 export class InstanceController {
 
-    private readonly _openstack: OpenstackService;
+    private readonly _openstack: GceServiceAlpha;
 
     /**
      * Create a new instance controller
      * @param openstack the openstack API http client
      */
-    constructor(readonly openstack: OpenstackService) {
+    constructor(readonly openstack: GceServiceAlpha) {
         this._openstack = openstack;
     }
 

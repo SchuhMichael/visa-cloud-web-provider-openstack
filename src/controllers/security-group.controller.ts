@@ -1,17 +1,17 @@
 import {NextFunction, Request, Response} from "express";
 import {singleton} from "tsyringe";
-import {OpenstackService} from "../services";
+import {GceServiceAlpha} from "../services";
 
 @singleton()
 export class SecurityGroupController {
 
-    private readonly _openstack: OpenstackService;
+    private readonly _openstack: GceServiceAlpha;
 
     /**
      * Create a new security group controller
      * @param openstack the openstack API http client
      */
-    constructor(readonly openstack: OpenstackService) {
+    constructor(readonly openstack: GceServiceAlpha) {
         this._openstack = openstack;
     }
 

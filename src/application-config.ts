@@ -28,6 +28,10 @@ export class ApplicationConfig {
         timeout: number;
     }
 
+    gce: {
+        keyFile: string;
+    }; 
+    
     constructor(data?: Partial<ApplicationConfig>) {
         Object.assign(this, data);
     }
@@ -62,6 +66,9 @@ export function APPLICATION_CONFIG(): ApplicationConfig {
                 addressProvider: process.env.VISA_WEB_PROVIDER_OPENSTACK_ADDRESS_PROVIDER,
                 addressProviderUUID: process.env.VISA_WEB_PROVIDER_OPENSTACK_ADDRESS_PROVIDER_UUID,
                 timeout: process.env.VISA_WEB_PROVIDER_OPENSTACK_HTTP_TIMEOUT == null ? 5000 : +process.env.VISA_WEB_PROVIDER_OPENSTACK_HTTP_TIMEOUT
+            },
+            gce: {
+                keyFile: process.env.VISA_WEB_PROVIDER_GCE_KEY_FILE == null ? "/var/secrets/google/key.json" : process.env.VISA_WEB_PROVIDER_GCE_KEY_FILE
             }
         };
     }

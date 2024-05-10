@@ -1,17 +1,17 @@
 import {NextFunction, Request, Response} from "express";
 import {singleton} from "tsyringe";
-import {OpenstackService} from "../services";
+import {GceServiceAlpha} from "../services";
 
 @singleton()
 export class MetricsController {
 
-    private readonly _openstack: OpenstackService;
+    private readonly _openstack: GceServiceAlpha;
 
     /**
      * Create a new image controller
-     * @param openstack the openstack API http client
+     * @param openstack the openstack API http client.
      */
-    constructor(readonly openstack: OpenstackService) {
+    constructor(readonly openstack: GceServiceAlpha) {
         this._openstack = openstack;
     }
 
