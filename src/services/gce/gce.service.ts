@@ -4,32 +4,64 @@ import axios, {AxiosInstance} from "axios";
 import {HttpException} from "../../exceptions";
 import {CloudProvider} from "../cloud-provider.interface";
 import {APPLICATION_CONFIG} from '../../application-config';
+import { serviceusage_v1 } from 'googleapis';
+import { GoogleAuth } from 'google-auth-library';
+import * as fs from 'fs';
+
+
+
 
 import {logger} from "../../utils";
 import {Mutex} from "async-mutex";
 
-import { InstancesClient } from '@google-cloud/compute';
+import { InstancesClient, DisksClient, ImagesClient, NetworksClient, MachineTypesClient, FirewallsClient } from '@google-cloud/compute';
 
 @singleton()
 export class GceServiceAlpha implements CloudProvider {
 
-    private readonly _client: InstancesClient;
     private readonly _mutex: Mutex;
-    private readonly projectId: string;
+    private readonly _projectId: string;
+    private readonly _zone: string;
+
+    private readonly _instancesClient: InstancesClient;
+    private readonly _networksClient: NetworksClient;
+    private readonly _firewallsClient: FirewallsClient;
+    private readonly _disksClient: DisksClient;
+    private readonly _imagesClient: ImagesClient;
+    private readonly _machineTypesClient: MachineTypesClient;
+    private readonly _serviceUsageClient: serviceusage_v1.Serviceusage;
+
+
 
     /**
      * Create a new gce service
      */
     constructor() {
-        this._client = this.createClient();
+        logger.debug(`running constructor for GceServiceAlpha`);
+        // todo: read projectId from the key file APPLICATION_CONFIG().gce.keyFile
+        const gceConfig = APPLICATION_CONFIG().gce;
+        const keyFile = require(gceConfig.keyFile);
+        this._projectId = keyFile.project_id;
+        this._zone = 'europe-west3-b'; // This should not be hardcoded, remove references and remove this attribute
         this._mutex = new Mutex();
+
+        //this.createInstancesClient = this.createInstancesClient.bind(this);
+        //this.createServiceUsageClient = this.createServiceUsageClient.bind(this);
+             
+        this._instancesClient = this.createInstancesClient();
+        this._networksClient = this.createNetworksClient();
+        this._firewallsClient = this.createFirewallsClient();
+        this._disksClient = this.createDisksClient();
+        this._imagesClient = this.createImagesClient();
+        this._machineTypesClient = this.createMachineTypesClient();
+        this._serviceUsageClient = this.createServiceUsageClient();
     }
 
     /**
-     * Create a new compute client for gce
+     * Create a new instances client for gce
      * @private
      */
-    private createClient():  InstancesClient {
+    private createInstancesClient():  InstancesClient {
         const client = new InstancesClient({
             keyFilename: APPLICATION_CONFIG().gce.keyFile,
         });
@@ -37,153 +69,211 @@ export class GceServiceAlpha implements CloudProvider {
     }
 
     /**
-     * Convert the openstack server response
+     * Create a new firewalls client for gce
+     * @private
+     */
+    private createFirewallsClient(): FirewallsClient {
+        const client = new FirewallsClient({
+            keyFilename: APPLICATION_CONFIG().gce.keyFile,
+        });
+        return client;
+    }
+    
+    /**
+     * Create a new diks client for gce
+     * @private
+     */
+        private createDisksClient(): DisksClient {
+            const client = new DisksClient({
+                keyFilename: APPLICATION_CONFIG().gce.keyFile,
+            });
+            return client;
+        }
+    
+    /**
+     * Create a new networks client for gce
+     * @private
+     */
+    private createNetworksClient(): NetworksClient {
+        const client = new NetworksClient({
+            keyFilename: APPLICATION_CONFIG().gce.keyFile,
+        });
+        return client;
+    }
+
+    /**
+     * Create a new images client for gce
+     * @private
+     */
+    private createImagesClient(): ImagesClient {
+        const client = new ImagesClient({
+            keyFilename: APPLICATION_CONFIG().gce.keyFile,
+        });
+        return client;
+    }
+
+    /**
+     * Create a new machine types client for gce
+     * @private
+     */
+    private createMachineTypesClient(): MachineTypesClient {
+        const client = new MachineTypesClient({
+            keyFilename: APPLICATION_CONFIG().gce.keyFile,
+        });
+        return client;
+    }
+
+    /**
+     * Create a new service usage client for gcp
+     * @private
+     */
+    private createServiceUsageClient(): serviceusage_v1.Serviceusage {
+        const keyFile = APPLICATION_CONFIG().gce.keyFile;
+        
+        // Read the credentials from the service account key file
+        const credentials = JSON.parse(fs.readFileSync(keyFile, 'utf-8'));
+        
+        // Create a GoogleAuth client with the service account credentials
+        const authClient = new GoogleAuth({
+            credentials,
+            scopes: ['https://www.googleapis.com/auth/cloud-platform']
+        });
+
+        // Instantiate the Service Usage client with the auth client
+        const client = new serviceusage_v1.Serviceusage({ auth: authClient });
+        return client;
+ 
+    }
+
+    /**
+     * Convert the gce instance response
      * @param server
      * @private
      */
-    private toInstance(server: any): Instance {
-        logger.debug(`private toInstance(server: any): Instance = {id: 'dummy-id', name: 'dummy-name', state: CloudInstanceState.ACTIVE, flavourId: 'dummy-flavour-id', imageId: 'dummy-image-id', createdAt: 'dummy-date', address: 'dummy-address', securityGroups: ['dummy-sec-group-0'], fault: null}`);
-        return {id: 'dummy-id', name: 'dummy-name', state: CloudInstanceState.ACTIVE, flavourId: 'dummy-flavour-id', imageId: 'dummy-image-id', createdAt: 'dummy-date', address: 'dummy-address', securityGroups: ['dummy-sec-group-0'], fault: null};
-        // const fault = (server): InstanceFault => {
-        //     const data = server['fault'];
-        //     if (data) {
-        //         const {message, code, details, created} = data;
-        //         return {
-        //             message,
-        //             code,
-        //             details: details,
-        //             createdAt: created
-        //         }
-        //     }
-        //     return null;
-        // };
 
-        // const securityGroups = (groups): string[] => {
-        //     if (groups) {
-        //         return groups.map(group => group.name);
-        //     }
-        //     return [];
-        // }
+    private async toInstance(server: any): Promise<Instance> {
+        const state = (status): CloudInstanceState => {
+            switch (status) {
+                case "PROVISIONING":
+                    return CloudInstanceState.BUILDING;
+                case "STAGING":
+                    return CloudInstanceState.BUILDING;
+                case "RUNNING":
+                    return CloudInstanceState.ACTIVE;
+                case "STOPPING":
+                    return CloudInstanceState.STOPPING;
+                case "STOPPED":
+                    return CloudInstanceState.STOPPED;
+                case "SUSPENDING":
+                    return CloudInstanceState.UNAVAILABLE;
+                case "SUSPENDED":
+                    return CloudInstanceState.UNAVAILABLE;
+                case "TERMINATED":
+                    return CloudInstanceState.ERROR;
+                case "REPAIRING":
+                    return CloudInstanceState.UNAVAILABLE;
+                }
+            }
+        const instanceState = state(server.status);
+        const zoneURL = server.zone;
+        const zoneName = zoneURL.split('/').pop();
+        logger.debug(`server in zone ${zoneName}`);
+        const externalIP = server.networkInterfaces[0].accessConfigs[0].natIP;
+        const createdAt = server.creationTimestamp;
 
-        // const address = (addresses): string => {
-        //     if (addresses) {
-        //         const provider = addresses[this._network.addressProvider];
-        //         if (provider) {
-        //             if (provider.length > 0) {
-        //                 return provider[0]['addr'];
-        //             }
-        //         }
-        //     }
-        //     return null;
-        // };
+        const diskURL = server.disks[0].source;
+        const diskName = diskURL.split('/').pop();
+        const [disk] = await this._disksClient.get({project: this._projectId, zone: zoneName, disk: diskName});
+        const imageURL = disk.sourceImage;
 
-        // const state = (status, taskStatus): CloudInstanceState => {
-        //     switch (status) {
-        //         case "BUILD":
-        //         case "REBUILD":
-        //             return CloudInstanceState.BUILDING;
-        //         case "ACTIVE":
-        //             if ("powering-off" === taskStatus) {
-        //                 return CloudInstanceState.STOPPING;
-        //             } else {
-        //                 return CloudInstanceState.ACTIVE;
-        //             }
-        //         case "HARD_REBOOT":
-        //         case "REBOOT":
-        //             return CloudInstanceState.REBOOTING;
-        //         case "MIGRATING":
-        //         case "RESCUE":
-        //         case "RESIZE":
-        //         case "REVERT_RESIZE":
-        //         case "VERIFY_SIZE":
-        //             return CloudInstanceState.UNAVAILABLE;
-        //         case "DELETED":
-        //         case "SHELVED":
-        //         case "SHELVED_OFFLOADED":
-        //         case "SOFT_DELETED":
-        //             return CloudInstanceState.DELETED;
-        //         case "PAUSED":
-        //         case "SHUTOFF":
-        //         case "SUSPENDED":
-        //             return CloudInstanceState.STOPPED;
-        //         case "ERROR":
-        //             return CloudInstanceState.ERROR;
-        //         case "UNKNOWN":
-        //         default:
-        //             return CloudInstanceState.UNKNOWN;
-        //     }
-        // }
+        const instanceName = server.name;
+        const instanceType = server.machineType;
+        const instanceId = server.id;
+        const networkURL = server.networkInterfaces[0].network;
+        const networkName = networkURL.split('/').pop();
 
-        // const {id, name, flavor, image, created, addresses, security_groups, status} = server;
-        // return {
-        //     id,
-        //     name: name,
-        //     // getting the task state is not very nice....
-        //     state: state(status, server['OS-EXT-STS:task_state']),
-        //     flavourId: flavor.id,
-        //     imageId: image.id,
-        //     createdAt: created,
-        //     address: address(addresses),
-        //     securityGroups: securityGroups(security_groups),
-        //     fault: fault(server)
-        // };
-
-    }
+        const [network] = await this._networksClient.get({project: this._projectId, network: networkName});
+        const [firewallRules] = await this._firewallsClient.list({project: this._projectId, filter: `network eq ${network.selfLink}`});
+        const firewallRuleIds = firewallRules.map(rule => rule.id) as string[];
+        logger.debug(`firewall rules ${firewallRuleIds}`)
+        const instanceTags = server.tags.items;
+        logger.debug(`tags ${instanceTags}`)
+        const fault = (server): InstanceFault => {
+            const data = server['fault'];
+            if (data) {
+                const {message, code, details, created} = data;
+                return {
+                    message,
+                    code,
+                    details: details,
+                    createdAt: created
+                }
+            }
+            return null;
+        };
+        const instanceFault = fault(server);
+        return {id: instanceId,
+                name: instanceName,
+                state: instanceState,
+                flavourId: instanceType,
+                imageId: imageURL,
+                createdAt: createdAt,
+                address: externalIP,
+                securityGroups: instanceTags,
+                fault: instanceFault
+            };
+        }
 
     /**
      * Get an instance for a given instance identifier
      * @param id the instance identifier
      */
     async instance(id: string): Promise<Instance> {
-        logger.debug('async instance(id: string): Promise<Instance> = {id: "dummy-id", name: "dummy-name", state: CloudInstanceState.ACTIVE, flavourId: "dummy-flavour-id", imageId: "dummy-image-id", createdAt: "dummy-date", address: "dummy-address", securityGroups: ["dummy-sec-group-0"], fault: null}');
-        return {id: 'dummy-id', name: 'dummy-name', state: CloudInstanceState.ACTIVE, flavourId: 'dummy-flavour-id', imageId: 'dummy-image-id', createdAt: 'dummy-date', address: 'dummy-address', securityGroups: ['dummy-sec-group-0'], fault: null};
-        // logger.info(`Fetching instance: ${id}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}`;
-        // const result = await this._client.get(url);
-        // const {data} = result;
-        // const {server} = data;
-        // return this.toInstance(server);
+        logger.info(`fetching instance ${id}`);
+        const [server] = await this._instancesClient.get({project: this._projectId, zone: this._zone, instance: id});
+        return this.toInstance(server);
     }
 
     /**
      * Get a list of instances
      */
     async instances(): Promise<Instance[]> {
-        logger.debug('async instances(): Promise<Instance[]> = [{id: "dummy-id", name: "dummy-name", state: CloudInstanceState.ACTIVE, flavourId: "dummy-flavour-id", imageId: "dummy-image-id", createdAt: "dummy-date", address: "dummy-address", securityGroups: ["dummy-sec-group-0"], fault: null}]');
         logger.info(`Fetching instances`);
-        const projectId = 'visa-420109';
-        logger.debug(`gce authenticated with key at ${APPLICATION_CONFIG().gce.keyFile}`);
-        const aggListRequest = this._client.aggregatedListAsync({project: projectId,}); 
-        for await (const [zone, instancesObject] of aggListRequest) {
+        const iterable = this._instancesClient.aggregatedListAsync({project: this._projectId,}); 
+        const instancesList: Instance[] = [];
+
+        for await (const [zone, instancesObject] of iterable) {
             const instances = instancesObject.instances;
             if (instances && instances.length > 0) {
               console.log(` ${zone}`);
               for (const instance of instances) {
-                console.log(` - ${instance.name} (${instance.machineType})`);
+                console.log(` - ${instance.name} (${instance.machineType}) ${instance.status} ${instance.networkInterfaces[0].network}`);
+                const mappedInstance = await this.toInstance(instance);
+                instancesList.push(mappedInstance);                
               }
             }
           }
-        return [{id: 'dummy-id', name: 'dummy-name', state: CloudInstanceState.ACTIVE, flavourId: 'dummy-flavour-id', imageId: 'dummy-image-id', createdAt: 'dummy-date', address: 'dummy-address', securityGroups: ['dummy-sec-group-0'], fault: null}];
-        
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers/detail`;
-        // const result = await this._client.get(url);
-        // const {data} = result;
-        // const {servers} = data;
-        // return servers.map(this.toInstance.bind(this));
+        return instancesList;
     }
 
     /**
      * Get a list of instance identifiers
      */
     async instanceIdentifiers(): Promise<string[]> {
-        logger.debug(`async instanceIdentifiers(): Promise<string[]> = ['dummy-id-1', 'dummy-id-2']`);
-        return ['dummy-id-1', 'dummy-id-2']
-        // logger.info(`Fetching instance identifiers`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers`;
-        // const result = await this._client.get(url);
-        // const {data} = result;
-        // const {servers} = data;
-        // return servers.map(server => server.id);
+        logger.info(`Fetching instances identifiers`);
+        const iterable = this._instancesClient.aggregatedListAsync({project: this._projectId,}); 
+        const identifiersList: string[] = [];
+
+        for await (const [zone, instancesObject] of iterable) {
+            const instances = instancesObject.instances;
+            if (instances && instances.length > 0) {
+              for (const instance of instances) {
+                const identifier = instance.id.toString();
+                identifiersList.push(identifier);
+              }
+            }
+          }
+        return identifiersList;
     }
 
     /**
@@ -191,14 +281,11 @@ export class GceServiceAlpha implements CloudProvider {
      * @param id the instance identifier
      */
     async securityGroupsForInstance(id: string): Promise<string[]> {
-        logger.debug(`async securityGroupsForInstance(id: string): Promise<string[]> = ['dummy-sec-group-0','dummy-sec-group-1']`);
-        return ['dummy-sec-group-0','dummy-sec-group-1']
-        // logger.info(`Fetching security groups for instance: ${id}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}/os-security-groups`;
-        // const result = await this._client.get(url);
-        // const {data} = result;
-        // const groups = data.security_groups;
-        // return groups.map(group => group.name);
+        logger.info(`fetching security groups for instance ${id}`);
+        const allTargetTags = await this.securityGroups();
+        logger.debug(`allTargetTags: ${Array.from(allTargetTags).join(', ')}`);
+        const server = await this.instance(id)
+        return server.securityGroups;
     }
 
     /**
@@ -206,35 +293,56 @@ export class GceServiceAlpha implements CloudProvider {
      * @param id the instance identifier
      * @param name the security group name
      */
-    async removeSecurityGroupFromInstance(id: string, name: string): Promise<void> {
-        logger.debug(`async removeSecurityGroupFromInstance(id: string, name: string): Promise<void> = {}`);
-        return ;
-        // logger.info(`Removing security group ${name} for instance: ${id}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}/action`;
-        // await this._client.post(url, {
-        //     removeSecurityGroup: {
-        //         name
-        //     }
-        // });
-    }
-
     /**
-     * Add a security for a given instance identifier
+     * Remove a security group for a given instance identifier
+     * @param id the instance identifier
+     * @param name the security group name
+     */
+    async removeSecurityGroupFromInstance(id: string, name: string): Promise<void> {
+        logger.info(`Removing security group (tag) ${name} for instance: ${id}`);
+        const allTargetTags = await this.securityGroups();
+        if (!allTargetTags.includes(name)) {
+            logger.error(`targetTag ${name} does not exist`);
+            return;
+            }   
+        const [instance] = await this._instancesClient.get({project: this._projectId, zone: this._zone, instance: id});
+        const tags = instance.tags.items.filter(tag => tag !== name);
+        const [operation] = await this._instancesClient.setTags({
+            project: this._projectId,
+            zone: this._zone,
+            instance: id,
+            tagsResource: {items: tags}
+        });
+        logger.debug(operation);
+    }
+    
+    /**
+     * Add a security group for a given instance identifier
      * @param id the instance identifier
      * @param name the security group name
      */
     async addSecurityGroupForInstance(id: string, name: string): Promise<void> {
-        logger.debug(`async addSecurityGroupForInstance(id: string, name: string): Promise<void>'`);
-        return ;
-        // logger.info(`Adding security group ${name} for instance: ${id}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}/action`;
-        // await this._client.post(url, {
-        //     addSecurityGroup: {
-        //         name
-        //     }
-        // });
+        
+        logger.info(`Adding security group (tag) ${name} for instance: ${id}`);
+        const allTargetTags = await this.securityGroups();
+        if (!allTargetTags.includes(name)) {
+            logger.error(`targetTag ${name} does not exist`);
+            return;
+        }
+        const [instance] = await this._instancesClient.get({project: this._projectId, zone: this._zone, instance: id});
+        const tags = instance.tags.items;
+        
+        if (!tags.includes(name)) {
+            tags.push(name);
+        }
+        const [operation] = await this._instancesClient.setTags({
+            project: this._projectId,
+            zone: this._zone,
+            instance: id,
+            tagsResource: {items: tags}
+        });
+        logger.debug(operation);
     }
-
     /**
      * Create a new instance
      * @param name the name of the instance
@@ -245,37 +353,52 @@ export class GceServiceAlpha implements CloudProvider {
      * @param bootCommand the boot command to use when starting the instance
      */
     async createInstance(name: string,
-                         imageId: string,
-                         flavourId: string,
-                         securityGroups: string[],
-                         metadata: Map<string, string>,
-                         bootCommand: string): Promise<string> {
-        logger.debug(`async createInstance(name: string, imageId: string, flavourId: string, securityGroups: string[], metadata: Map<string, string>, bootCommand: string): Promise<string> = 'dummy-id'`);
-        return 'dummy-id'
-        // logger.info(`Creating new instance: ${name}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers`;
-        // const server = {
-        //     name,
-        //     imageRef: imageId,
-        //     flavorRef: flavourId,
-        //     security_groups: securityGroups.map(group => {
-        //         return {
-        //             name: group
-        //         }
-        //     }),
-        //     networks: this._network.addressProviderUUID.split(',').map((uuid) => (
-        //         {
-        //             uuid: uuid
-        //         }
-        //     )),
-        //     metadata,
-        //     user_data: Buffer.from(bootCommand).toString('base64')
-        // }
+                        imageId: string,
+                        flavourId: string,
+                        securityGroups: string[],
+                        metadata: Map<string, string>,
+                        bootCommand: string): Promise<string> {
+            logger.info(`Creating new instance: ${name}`);
 
-        // const result = await this._client.post(url, {server});
-        // const {data} = result;
-        // return data.server.id;
-    }
+            const instanceResource = {
+                name: name,
+                machineType: `zones/${this._zone}/machineTypes/${flavourId}`,
+                networkInterfaces: [{
+                    network: `projects/${this._projectId}/global/networks/default`,
+                }],
+                disks: [{
+                    boot: true,
+                    initializeParams: {
+                        sourceImage: imageId,
+                    },
+                }],
+                tags: {
+                    items: securityGroups,
+                },
+                metadata: {
+                    items: Array.from(metadata, ([key, value]) => ({ key, value })),
+                },
+            };
+
+            const [operation] = await this._instancesClient.insert({
+                instanceResource,
+                project: this._projectId,
+                zone: this._zone,
+            });
+
+            // Wait for the operation to complete
+            const [response] = await operation.promise();
+
+            // Fetch the instance
+            const [instance] = await this._instancesClient.get({
+                project: this._projectId,
+                zone: this._zone,
+                instance: name,
+            });
+
+            return instance.id.toString();
+        }
+
 
     /**
      * Shutdown an instance
@@ -317,20 +440,14 @@ export class GceServiceAlpha implements CloudProvider {
      * Get a list of images
      */
     async images(): Promise<Image[]> {
-        logger.debug(`async images(): Promise<Image[]> = [{id: 'dummy-image-0', name: 'dummy-image-0', size: 0, createdAt: 'dummy-date'}]`);
-        return [{id: 'dummy-image-0', name: 'dummy-image-0', size: 0, createdAt: 'dummy-date'}];
-        // logger.info(`Fetching images`);
-        // const url = `${this._endpoints.imageEndpoint}/v2/images`;
-        // const result = await this._client.get(url);
-        // const {data} = result;
-        // return data.images.map(image => {
-        //     return {
-        //         id: image.id,
-        //         name: image.name,
-        //         size: image.size,
-        //         createdAt: image['created_at']
-        //     };
-        // });
+        logger.info(`Fetching images`);
+        const [images] = await this._imagesClient.list({project: this._projectId});
+        return images.map(image => ({
+            id: String(image.id),
+            name: image.name,
+            size: Number(image.diskSizeGb),
+            createdAt: image.creationTimestamp
+        }));
     }
 
     /**
@@ -350,40 +467,38 @@ export class GceServiceAlpha implements CloudProvider {
      * @param id the image identifier
      */
     async image(id: string): Promise<Image> {
-        logger.debug(`async image(id: string): Promise<Image> = {id: 'dummy-image-0', name: 'dummy-image-0', size: 0, createdAt: 'dummy-date'}`);
-        return {id: 'dummy-image-0', name: 'dummy-image-0', size: 0, createdAt: 'dummy-date'};
-        // logger.info(`Fetching image: ${id}`);
-        // const url = `${this._endpoints.imageEndpoint}/v2/images/${id}`;
-        // const result = await this._client.get(url);
-        // const {data} = result;
-        // return {
-        //     id: data.id,
-        //     name: data.name,
-        //     size: data.size,
-        //     createdAt: data['created_at']
-        // };
+        logger.info(`Fetching image: ${id}`);
+        const [image] = await this._imagesClient.get({
+            project: this._projectId,
+            image: id
+        });
+        return {
+            id: String(image.id),
+            name: image.name,
+            size: Number(image.diskSizeGb),
+            createdAt: image.creationTimestamp
+        };
     }
+
 
     /**
      * Get a list of flavours
      */
     async flavours(): Promise<Flavour[]> {
-        logger.debug(`async flavours(): Promise<Flavour[]> = [{id: 'dummy-flavour-0', name: 'dummy-flavour-0', cpus: 0, ram: 0, disk: 0}]`);
-        return [{id: 'dummy-flavour-0', name: 'dummy-flavour-0', cpus: 0, ram: 0, disk: 0}];
-        // logger.info(`Fetching flavours`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/flavors/detail`;
-        // // logger.info(`Fetching flavours: ${url}`);
-        // const result = await this._client.get(url);
-        // const {data} = result;
-        // return data.flavors.map(image => {
-        //     return {
-        //         id: image.id,
-        //         name: image.name,
-        //         cpus: image.vcpus,
-        //         disk: image.disk,
-        //         ram: image.ram
-        //     };
-        // });
+        logger.info(`Fetching flavours`);
+        const [machineTypes] = await this._machineTypesClient.list({
+            project: this._projectId,
+            zone: this._zone,
+        });        
+        logger.debug(`Machine Types: ${JSON.stringify(machineTypes)}`);
+
+        return machineTypes.map(machineType => ({
+            id: machineType.name,
+            name: machineType.name,
+            cpus: Number(machineType.guestCpus),
+            disk: Number(machineType.maximumPersistentDisksSizeGb),
+            ram: Number(machineType.memoryMb)
+        }));
     }
 
     /**
@@ -391,28 +506,46 @@ export class GceServiceAlpha implements CloudProvider {
      * @param id the flavour identifier
      */
     async flavour(id: string): Promise<Flavour> {
-        logger.debug(`async flavour(id: string): Promise<Flavour> = {id: 'dummy-flavour-0', name: 'dummy-flavour-0', cpus: 0, ram: 0, disk: 0}`);
-        return {id: 'dummy-flavour-0', name: 'dummy-flavour-0', cpus: 0, ram: 0, disk: 0};
-        // logger.info(`Fetching flavour: ${id}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/flavors/${id}`;
-        // const result = await this._client.get(url);
-        // const {data} = result;
-        // const flavour = data.flavor;
-        // return {
-        //     id: flavour.id,
-        //     name: flavour.name,
-        //     cpus: flavour.vcpus,
-        //     ram: flavour.ram,
-        //     disk: flavour.disk
-        // };
+        logger.info(`Fetching flavour: ${id}`);
+    
+        const [machineType] = await this._machineTypesClient.get({
+            project: this._projectId,
+            zone: this._zone,
+            machineType: id,
+        });
+    
+        return {
+            id: machineType.name,
+            name: machineType.name,
+            cpus: Number(machineType.guestCpus),
+            disk: Number(machineType.maximumPersistentDisksSizeGb),
+            ram: Number(machineType.memoryMb)
+        };
+    }
+    async getCpuQuota(): Promise<number> {
+        logger.debug(`Using _serviceUsageClient with projectID ${this._projectId}`);
+        try {
+            const response = await this._serviceUsageClient.services.list({
+                parent: `projects/${this._projectId}`
+            });
+            logger.debug(`response: ${JSON.stringify(response)}`);
+            const services = response.data.services || [];
+            logger.debug(`fetched Services: ${JSON.stringify(services)}`);
+            return services.length;
+        } catch (err) {
+            logger.error('Error listing services:', err);
+            return 0;
+        }
     }
 
+        
+    
     /**
      * Get the cloud metrics (i.e. memory used, number of instances etc.)
      */
     async metrics(): Promise<Metrics> {
         logger.debug(`async metrics(): Promise<Metrics> = {maxTotalRamSize: 0, totalRamUsed: 0, totalInstancesUsed: 0, maxTotalInstances: 0, maxTotalCores: 0, totalCoresUsed: 0}`);
-        return {maxTotalRamSize: 0, totalRamUsed: 0, totalInstancesUsed: 0, maxTotalInstances: 0, maxTotalCores: 0, totalCoresUsed: 0};
+        return {maxTotalRamSize: 0, totalRamUsed: 0, totalInstancesUsed: 0, maxTotalInstances: 0, maxTotalCores: await Number(this.getCpuQuota()), totalCoresUsed: 0};
         // logger.info(`Fetching metrics`);
         // const url = `${this._endpoints.computeEndpoint}/v2/limits`;
         // const result = await this._client.get(url);
@@ -432,14 +565,21 @@ export class GceServiceAlpha implements CloudProvider {
      * Get all available security groups
      */
     async securityGroups(): Promise<string[]> {
-        logger.debug(`async securityGroups(): Promise<string[]> = ['dummy-sec-group-0']`);
-        return ['dummy-sec-group-0'];
-        // logger.info(`Fetching all available security groups`);
-        // const url = `${this._endpoints.networkEndpoint}/v2.0/security-groups`;
-        // const result = await this._client.get(url);
-        // const {data} = result;
-        // const groups = data.security_groups;
-        // return groups.map(group => group.name).sort((a, b) => a.localeCompare(b));
-    }
+    try {
+        const [firewalls] = await this._firewallsClient.list({project: this._projectId});
+        const targetTags = new Set<string>();
 
+        // Iterate over all firewall rules
+        for (const firewall of firewalls) {
+            if (firewall.targetTags) {
+                // Add all target tags from this rule to the set
+                firewall.targetTags.forEach(tag => targetTags.add(tag));
+            }
+        }
+        logger.debug(`collected targetTags in project ${this._projectId}: ${Array.from(targetTags).join(', ')}`);        return Array.from(targetTags); // Convert the Set to an Array
+    } catch (err) {
+        logger.error('Error fetching target tags from firewall rules:', err);
+        return [];
+    }
+}
 }
