@@ -8,13 +8,10 @@ import { serviceusage_v1 } from 'googleapis';
 import { GoogleAuth } from 'google-auth-library';
 import * as fs from 'fs';
 
-
-
-
 import {logger} from "../../utils";
 import {Mutex} from "async-mutex";
 
-import { InstancesClient, DisksClient, ImagesClient, NetworksClient, MachineTypesClient, FirewallsClient } from '@google-cloud/compute';
+import { InstancesClient, DisksClient, ImagesClient, NetworksClient, MachineTypesClient, FirewallsClient, ZoneOperationsClient, protos} from '@google-cloud/compute';
 
 @singleton()
 export class GceServiceAlpha implements CloudProvider {
@@ -30,8 +27,7 @@ export class GceServiceAlpha implements CloudProvider {
     private readonly _imagesClient: ImagesClient;
     private readonly _machineTypesClient: MachineTypesClient;
     private readonly _serviceUsageClient: serviceusage_v1.Serviceusage;
-
-
+    private readonly _zoneOperationsClient: ZoneOperationsClient;
 
     /**
      * Create a new gce service
@@ -44,9 +40,6 @@ export class GceServiceAlpha implements CloudProvider {
         this._projectId = keyFile.project_id;
         this._zone = 'europe-west3-b'; // This should not be hardcoded, remove references and remove this attribute
         this._mutex = new Mutex();
-
-        //this.createInstancesClient = this.createInstancesClient.bind(this);
-        //this.createServiceUsageClient = this.createServiceUsageClient.bind(this);
              
         this._instancesClient = this.createInstancesClient();
         this._networksClient = this.createNetworksClient();
@@ -55,6 +48,7 @@ export class GceServiceAlpha implements CloudProvider {
         this._imagesClient = this.createImagesClient();
         this._machineTypesClient = this.createMachineTypesClient();
         this._serviceUsageClient = this.createServiceUsageClient();
+        this._zoneOperationsClient = this.createZoneOperationsClient();
     }
 
     /**
@@ -124,6 +118,16 @@ export class GceServiceAlpha implements CloudProvider {
     }
 
     /**
+     * Create a new operations client for gce
+     * @private
+     */
+    private createZoneOperationsClient(): ZoneOperationsClient {
+        return new ZoneOperationsClient({
+            keyFilename: APPLICATION_CONFIG().gce.keyFile,
+        });
+    }
+
+    /**
      * Create a new service usage client for gcp
      * @private
      */
@@ -169,7 +173,7 @@ export class GceServiceAlpha implements CloudProvider {
                 case "SUSPENDED":
                     return CloudInstanceState.UNAVAILABLE;
                 case "TERMINATED":
-                    return CloudInstanceState.ERROR;
+                    return CloudInstanceState.STOPPED;
                 case "REPAIRING":
                     return CloudInstanceState.UNAVAILABLE;
                 }
@@ -178,16 +182,20 @@ export class GceServiceAlpha implements CloudProvider {
         const zoneURL = server.zone;
         const zoneName = zoneURL.split('/').pop();
         logger.debug(`server in zone ${zoneName}`);
-        const externalIP = server.networkInterfaces[0].accessConfigs[0].natIP;
+
+        // This is NOT the external IP address on GCE, but with the first test setup, visa and the VMs run in the same network
+        const externalIP = server.networkInterfaces[0].networkIP;
+        logger.debug(`server ${server.name} has state ${server.status}`);
         const createdAt = server.creationTimestamp;
 
         const diskURL = server.disks[0].source;
         const diskName = diskURL.split('/').pop();
         const [disk] = await this._disksClient.get({project: this._projectId, zone: zoneName, disk: diskName});
-        const imageURL = disk.sourceImage;
+        // logger.debug(`disk: ${JSON.stringify(disk)}`);
+        const imageId = disk.sourceImageId;
 
         const instanceName = server.name;
-        const instanceType = server.machineType;
+        const instanceType = server.machineType.split('/').pop();
         const instanceId = server.id;
         const networkURL = server.networkInterfaces[0].network;
         const networkName = networkURL.split('/').pop();
@@ -195,7 +203,7 @@ export class GceServiceAlpha implements CloudProvider {
         const [network] = await this._networksClient.get({project: this._projectId, network: networkName});
         const [firewallRules] = await this._firewallsClient.list({project: this._projectId, filter: `network eq ${network.selfLink}`});
         const firewallRuleIds = firewallRules.map(rule => rule.id) as string[];
-        logger.debug(`firewall rules ${firewallRuleIds}`)
+        // logger.debug(`firewall rules ${firewallRuleIds}`)
         const instanceTags = server.tags.items;
         logger.debug(`tags ${instanceTags}`)
         const fault = (server): InstanceFault => {
@@ -216,7 +224,7 @@ export class GceServiceAlpha implements CloudProvider {
                 name: instanceName,
                 state: instanceState,
                 flavourId: instanceType,
-                imageId: imageURL,
+                imageId: imageId,
                 createdAt: createdAt,
                 address: externalIP,
                 securityGroups: instanceTags,
@@ -288,11 +296,7 @@ export class GceServiceAlpha implements CloudProvider {
         return server.securityGroups;
     }
 
-    /**
-     * Remove a security for a given instance identifier
-     * @param id the instance identifier
-     * @param name the security group name
-     */
+
     /**
      * Remove a security group for a given instance identifier
      * @param id the instance identifier
@@ -343,6 +347,8 @@ export class GceServiceAlpha implements CloudProvider {
         });
         logger.debug(operation);
     }
+
+
     /**
      * Create a new instance
      * @param name the name of the instance
@@ -358,46 +364,112 @@ export class GceServiceAlpha implements CloudProvider {
                         securityGroups: string[],
                         metadata: Map<string, string>,
                         bootCommand: string): Promise<string> {
-            logger.info(`Creating new instance: ${name}`);
+        logger.info(`Creating new instance: ${name}`);
+        const [image] = await this._imagesClient.get({
+            project: this._projectId,
+            image: imageId
+        });
+        
+        // Log metadata to check its type and value
+        logger.debug('Metadata:', metadata);
+        // Add bootCommand to metadata
+        metadata.set('user-data', bootCommand);        
 
-            const instanceResource = {
-                name: name,
-                machineType: `zones/${this._zone}/machineTypes/${flavourId}`,
-                networkInterfaces: [{
-                    network: `projects/${this._projectId}/global/networks/default`,
-                }],
-                disks: [{
-                    boot: true,
-                    initializeParams: {
-                        sourceImage: imageId,
-                    },
-                }],
-                tags: {
-                    items: securityGroups,
-                },
-                metadata: {
-                    items: Array.from(metadata, ([key, value]) => ({ key, value })),
-                },
-            };
-
-            const [operation] = await this._instancesClient.insert({
-                instanceResource,
-                project: this._projectId,
-                zone: this._zone,
-            });
-
-            // Wait for the operation to complete
-            const [response] = await operation.promise();
-
-            // Fetch the instance
-            const [instance] = await this._instancesClient.get({
-                project: this._projectId,
-                zone: this._zone,
-                instance: name,
-            });
-
-            return instance.id.toString();
+        // Check if metadata is an instance of Map
+        if (metadata instanceof Map) {
+            // Log metadata entries
+            logger.debug('Metadata Entries:', Array.from(metadata.entries()));
+        } else if (metadata){
+            logger.error('metadata is not an instance of Map, but of type: ', typeof metadata);
+        } else {
+            logger.error('metadata is null');
         }
+        const instanceResource: protos.google.cloud.compute.v1.IInstance ={
+            name: name,
+            machineType: `zones/${this._zone}/machineTypes/${flavourId}`,
+            networkInterfaces: [{
+                network: `projects/${this._projectId}/global/networks/default`,
+            }],
+            disks: [{
+                boot: true,
+                initializeParams: {
+                    sourceImage: image.selfLink,
+                },
+            }],
+            tags: {
+                items: securityGroups,
+            },
+            metadata: {
+                items: Array.from(metadata.entries()).map(([key, value]) => ({ key, value })),
+            },
+        };
+
+        const request: protos.google.cloud.compute.v1.IInsertInstanceRequest = {
+            instanceResource,
+            project: this._projectId,
+            zone: this._zone,
+        };
+
+        // Insert the instance
+        const [operation] = await this._instancesClient.insert(request);
+
+        // Wait for the operation to complete
+        await this.waitForOperation(operation);
+
+        // Fetch the instance
+        const [instance] = await this._instancesClient.get({
+            project: this._projectId,
+            zone: this._zone,
+            instance: name,
+        });
+        logger.debug(`created instance: ${JSON.stringify(instance)}`);
+        return instance.id.toString();
+    }
+
+    // Helper method to wait for an operation to complete
+    async waitForOperation(operation: any): Promise<void> {
+        const maxRetries = 5; // Maximum number of retries
+        const retryDelay = 5000; // Delay between retries in milliseconds
+    
+        let attempts = 0;
+    
+        while (true) {
+            try {
+                const [operationResult] = await this._zoneOperationsClient.wait({
+                    operation: operation.name,
+                    project: this._projectId,
+                    zone: this._zone,
+                });
+    
+                if (operationResult.status === 'DONE') {
+                    if (operationResult.error) {
+                        const errorMessage = operationResult.error.errors
+                            ? operationResult.error.errors.map((err: any) => err.message).join(', ')
+                            : 'Unknown error';
+                        throw new Error(`Operation failed: ${errorMessage}`);
+                    }
+                    break;
+                }
+    
+            } catch (err: any) {
+                if (err.message.includes('ETIMEDOUT')) {
+                    if (attempts < maxRetries) {
+                        attempts++;
+                        logger.warning(`Timeout while waiting for instance to become ready. Retrying... (${attempts}/${maxRetries})`);
+                        await new Promise(resolve => setTimeout(resolve, retryDelay));
+                        continue;
+                    } else {
+                        throw new Error(`Operation failed after ${maxRetries} attempts: ${err.message}`);
+                    }
+                } else {
+                    throw err;
+                }
+            }
+    
+            // Sleep for a while before polling again
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    }
 
 
     /**
@@ -406,11 +478,20 @@ export class GceServiceAlpha implements CloudProvider {
      */
     async shutdownInstance(id: string): Promise<void> {
         logger.debug(`async shutdownInstance(id: string): Promise<void>`);
-        return ;
-        // logger.info(`Shutting down instance: ${id}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}/action`;
-        // await this._client.post(url, {'os-stop': null});
+    
+        try {
+            const [operation] = await this._instancesClient.stop({
+                project: this._projectId,
+                zone: this._zone,
+                instance: id,
+            });
+            logger.info(`Shutting down instance: ${id}`);
+        } catch (err) {
+            logger.error(`Failed to shutdown instance: ${id}`, err);
+            throw err;
+        }
     }
+
 
     /**
      * Start an instance
@@ -418,10 +499,17 @@ export class GceServiceAlpha implements CloudProvider {
      */
     async startInstance(id: string): Promise<void> {
         logger.debug(`async startInstance(id: string): Promise<void>`);
-        return ;
-        // logger.info(`Starting instance: ${id}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}/action`;
-        // await this._client.post(url, {'os-start': null});
+        try {
+            const [operation] = await this._instancesClient.start({
+                project: this._projectId,
+                zone: this._zone,
+                instance: id,
+            });
+            logger.info(`Starting instance: ${id}`);
+        } catch (err) {
+            logger.error(`Failed to start instance: ${id}`, err);
+            throw err;
+        }
     }
 
     /**
@@ -430,10 +518,19 @@ export class GceServiceAlpha implements CloudProvider {
      */
     async rebootInstance(id: string): Promise<void> {
         logger.debug(`async rebootInstance(id: string): Promise<void>`);
-        return ;
-        // logger.info(`Rebooting instance: ${id}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}/action`;
-        // await this._client.post(url, {'reboot': {'type': 'HARD'}});
+    
+        try {
+            // Stop the instance
+            await this.shutdownInstance(id);
+    
+            // Start the instance
+            await this.startInstance(id);
+    
+            logger.info(`Rebooting instance: ${id}`);
+        } catch (err) {
+            logger.error(`Failed to reboot instance: ${id}`, err);
+            throw err;
+        }
     }
 
     /**
@@ -455,11 +552,19 @@ export class GceServiceAlpha implements CloudProvider {
      * @param id the instance identifier
      */
     async deleteInstance(id: string): Promise<void> {
-        logger.debug(`async deleteInstance(id: string): Promise<void> = {}`)
-        return ;
-        // logger.info(`Deleting instance: ${id}`);
-        // const url = `${this._endpoints.computeEndpoint}/v2/servers/${id}`;
-        // await this._client.delete(url);
+        logger.debug(`async deleteInstance(id: string): Promise<void>`);
+    
+        try {
+            const [operation] = await this._instancesClient.delete({
+                project: this._projectId,
+                zone: this._zone,
+                instance: id,
+            });
+            logger.info(`Deleting instance: ${id}`);
+        } catch (err) {
+            logger.error(`Failed to delete instance: ${id}`, err);
+            throw err;
+        }
     }
 
     /**
@@ -472,6 +577,7 @@ export class GceServiceAlpha implements CloudProvider {
             project: this._projectId,
             image: id
         });
+        logger.debug(`image: ${JSON.stringify(image)}`);
         return {
             id: String(image.id),
             name: image.name,
@@ -522,30 +628,45 @@ export class GceServiceAlpha implements CloudProvider {
             ram: Number(machineType.memoryMb)
         };
     }
-    async getCpuQuota(): Promise<number> {
+    getCpuQuota(): number {
+        logger.debug('getCpuQuota() called again');
+        return 1000;
+    }
+        /*
         logger.debug(`Using _serviceUsageClient with projectID ${this._projectId}`);
         try {
-            const response = await this._serviceUsageClient.services.list({
-                parent: `projects/${this._projectId}`
+            const response = await this._serviceUsageClient.getService({
+                name: `projects/${this._projectId}/services/compute.googleapis.com`
             });
-            logger.debug(`response: ${JSON.stringify(response)}`);
-            const services = response.data.services || [];
-            logger.debug(`fetched Services: ${JSON.stringify(services)}`);
-            return services.length;
-        } catch (err) {
-            logger.error('Error listing services:', err);
-            return 0;
-        }
-    }
 
+            logger.debug(`response: ${JSON.stringify(response)}`);
+
+            if (response.data.state === 'ENABLED') {
+                const [quotas] = await this._computeClient.projects.get({
+                    project: this._projectId
+                });
+
+                logger.debug(`quotas: ${JSON.stringify(quotas)}`);
+                const cpuQuota = quotas.quotas.find((quota) => quota.metric === 'CPUS');
+                return cpuQuota ? cpuQuota.maxLimit : 0;
+            } else {
+                logger.error('Compute API is not enabled');
+                return 0;
+            }
+        } catch (err) {
+            logger.error('Error getting compute service or quota:', err);
+        */
+
+    
         
     
     /**
      * Get the cloud metrics (i.e. memory used, number of instances etc.)
      */
     async metrics(): Promise<Metrics> {
-        logger.debug(`async metrics(): Promise<Metrics> = {maxTotalRamSize: 0, totalRamUsed: 0, totalInstancesUsed: 0, maxTotalInstances: 0, maxTotalCores: 0, totalCoresUsed: 0}`);
-        return {maxTotalRamSize: 0, totalRamUsed: 0, totalInstancesUsed: 0, maxTotalInstances: 0, maxTotalCores: await Number(this.getCpuQuota()), totalCoresUsed: 0};
+        logger.debug(`async metrics(): Promise<Metrics>`);
+        logger.debug(`return {maxTotalRamSize: 1000, totalRamUsed: 100, totalInstancesUsed: 10, maxTotalInstances: 100, maxTotalCores: 1000, totalCoresUsed: 100};`);
+        return {maxTotalRamSize: 1000, totalRamUsed: 100, totalInstancesUsed: 10, maxTotalInstances: 100, maxTotalCores: 1000, totalCoresUsed: 100};
         // logger.info(`Fetching metrics`);
         // const url = `${this._endpoints.computeEndpoint}/v2/limits`;
         // const result = await this._client.get(url);

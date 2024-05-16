@@ -5,3 +5,8 @@ npm-debug.log
 .gitignore
 .git
 *.env
+deploy
+deploy/*
+.devcontainer
+.vscode
+.DS_Store

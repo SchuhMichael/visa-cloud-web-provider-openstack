@@ -4,6 +4,7 @@ import {GceServiceAlpha} from "../services";
 import {NextFunction} from "express-serve-static-core";
 import Joi from "joi";
 import {HttpException} from "../exceptions";
+import {logger} from "../utils";
 
 @singleton()
 export class InstanceController {
@@ -55,12 +56,20 @@ export class InstanceController {
                 throw new HttpException(errors.error.message, 400);
             } else {
                 const {name, imageId, flavourId, securityGroups, metadata, bootCommand} = json;
+                // Check if metadata is already a Map, otherwise convert it
+                let metadataMap: Map<string, string>;
+                if (metadata instanceof Map) {
+                    metadataMap = metadata;
+                } else {
+                    metadataMap = new Map<string, string>(Object.entries(metadata));
+                }
+
                 const id = await this._openstack.createInstance(
                     name,
                     imageId,
                     flavourId,
                     securityGroups,
-                    metadata,
+                    metadataMap,
                     bootCommand);
                 response.status(201).json({id});
             }
@@ -109,6 +118,7 @@ export class InstanceController {
      */
     public async addSecurityGroup(request: Request, response: Response, next: NextFunction) {
         try {
+            logger.info('Adding security group to instance');
             const json = request.body;
             const schema = Joi.object({
                 name: Joi.string().required().not().empty(),
