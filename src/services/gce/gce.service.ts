@@ -373,7 +373,9 @@ export class GceServiceAlpha implements CloudProvider {
         // Log metadata to check its type and value
         logger.debug('Metadata:', metadata);
         // Add bootCommand to metadata
-        metadata.set('user-data', bootCommand);        
+        metadata.set('user-data', bootCommand);   
+        metadata.put("block-project-ssh-keys", "TRUE");
+        metadata.put("enable-oslogin", "FALSE");     
 
         // Check if metadata is an instance of Map
         if (metadata instanceof Map) {
