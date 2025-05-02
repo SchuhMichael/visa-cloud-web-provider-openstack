@@ -396,6 +396,7 @@ export class GceServiceAlpha implements CloudProvider {
                 boot: true,
                 initializeParams: {
                     sourceImage: image.selfLink,
+                    diskSizeGb: "50",
                 },
             }],
             tags: {
