@@ -373,7 +373,7 @@ export class GceServiceAlpha implements CloudProvider {
         // Log metadata to check its type and value
         metadata.set("block-project-ssh-keys", "TRUE");
         metadata.set("enable-oslogin", "FALSE");     
-        logger.debug('Metadata:', metadata);
+        // logger.debug('Metadata:', metadata);
         // Add bootCommand to metadata
         metadata.set('user-data', bootCommand);   
 
