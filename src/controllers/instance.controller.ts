@@ -48,7 +48,7 @@ export class InstanceController {
                 imageId: Joi.string().required().not().empty(),
                 flavourId: Joi.string().required().not().empty(),
                 securityGroups: Joi.array().items(Joi.string()),
-                metadata: Joi.object().pattern(Joi.string(), Joi.string()),
+                metadata: Joi.object().pattern(Joi.string(), Joi.string().allow('')),
                 bootCommand: Joi.not().required()
             });
             const errors = schema.validate(json);
